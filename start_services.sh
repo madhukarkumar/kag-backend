@@ -26,7 +26,8 @@ CELERY_PID=$!
 
 # Start FastAPI application
 echo "Starting FastAPI application..."
-uvicorn main:app --host 0.0.0.0 --port 8000 --log-level debug > /app/logs/fastapi.log 2>&1 &
+PORT="${PORT:-8000}"  # Use Railway's PORT env var or default to 8000
+uvicorn main:app --host 0.0.0.0 --port $PORT --log-level debug > /app/logs/fastapi.log 2>&1 &
 FASTAPI_PID=$!
 
 # Function to forward signals to child processes
