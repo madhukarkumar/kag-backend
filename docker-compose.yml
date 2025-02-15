@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://localhost:6379/0
+      - CELERY_BROKER_URL=redis://localhost:6379/0
+      - CELERY_RESULT_BACKEND=redis://localhost:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - SINGLESTORE_HOST=${SINGLESTORE_HOST}
+      - SINGLESTORE_PORT=${SINGLESTORE_PORT}
+      - SINGLESTORE_USER=${SINGLESTORE_USER}
+      - SINGLESTORE_PASSWORD=${SINGLESTORE_PASSWORD}
+      - SINGLESTORE_DATABASE=${SINGLESTORE_DATABASE}
+      - API_KEY=${API_KEY}
+    volumes:
+      - ./documents:/app/documents  # For persistent document storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-H", "X-API-Key: ${API_KEY}", "http://localhost:8000/kbdata"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

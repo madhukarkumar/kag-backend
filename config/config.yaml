@@ -1,0 +1,59 @@
+knowledge_creation:
+  chunking:
+    semantic_rules:
+      - "Always keep section headers with their immediate content"
+      - "Keep feature lists and technical specifications together with their parent section"
+      - "Maintain the relationship between titles/subtitles and their descriptions"
+      - "For lists of features or capabilities, keep the entire list in one chunk"
+      - "Keep related concepts together, especially for lists and feature descriptions"
+      - "Preserve technical terms and their definitions together"
+      - "Keep API endpoints with their parameters and descriptions"
+    overlap_size: 150
+    min_chunk_size: 200
+    max_chunk_size: 1500
+  entity_extraction:
+    model: "o3-mini-2025-01-31"
+    confidence_threshold: 0.5
+    min_description_length: 50
+    max_description_length: 500
+    description_required: true
+    system_prompt: "You are a knowledge extraction system. Extract entities and relationships from text.\nONLY output a valid JSON object with this structure:\n{\n  \"entities\": [\n    {\n      \"name\": \"<entity name>\",\n      \"type\": \"<PERSON|ORGANIZATION|LOCATION|TECHNOLOGY|CONCEPT|EVENT|PRODUCT>\",\n      \"description\": \"<A detailed description of the entity, including its key characteristics, role, and significance in the context>\",\n      \"aliases\": [\"<alternative names>\"],\n      \"metadata\": {\n        \"confidence\": 0.7,\n        \"context_relevance\": 0.8,\n        \"description_quality\": 0.7\n      }\n    }\n  ],\n  \"relationships\": [\n    {\n      \"source\": \"<source entity name>\",\n      \"target\": \"<target entity name>\",\n      \"type\": \"<relationship type>\",\n      \"description\": \"<A brief description of how these entities are related>\",\n      \"metadata\": {\n        \"confidence\": 0.7,\n        \"context_relevance\": 0.8\n      }\n    }\n  ]\n}\nDO NOT include any text outside the JSON."
+    extraction_prompt_template: "Extract entities and relationships from this text. For each entity:\n- Provide a detailed description\n- Include any alternative names or aliases\n- Specify technical details when present\n- Note relationships with other entities\n- Maintain proper technical context\n\nText to analyze:\n{text}"
+retrieval:
+  search:
+    top_k: 10
+    vector_weight: 0.7
+    text_weight: 0.5
+    exact_phrase_weight: 2.0
+    single_term_weight: 1.5
+    proximity_distance: 5
+    min_score_threshold: 0.15
+    min_similarity_score: 0.4
+    context_window_size: 3
+  response_generation:
+    model: "gpt-4o"  # Default model, can be changed to other OpenAI models
+    model_config:  # Model-specific configurations
+      gpt-3.5-turbo:
+        max_tokens: 1500
+        temperature: 0.2
+      gpt-4o:
+        max_tokens: 2500
+        temperature: 0.25
+      mixtral-8x7b-32768:  # Groq model
+        max_tokens: 1500
+        temperature: 0.3
+        max_context_length: 4000
+      llama-3.3-70b-versatile:     # Groq model
+        max_tokens: 1500
+        temperature: 0.3
+        max_context_length: 4000
+    groq_base_url: "https://api.groq.com/openai/v1"  # Groq API endpoint
+    temperature: 0.3  # Global default if not specified in model_config
+    max_tokens: 1500  # Global default if not specified in model_config
+    citation_style: "inline"
+    include_confidence: true
+    query_expansion:  # Configuration for query expansion
+      openai_model: "gpt-4o"
+      groq_model: "mixtral-8x7b-32768"
+      temperature: 0.0
+    prompt_template: "Answer the following technical question based on the provided context.\nFocus on accuracy and technical details.\nInclude specific features, capabilities, and technical specifications when relevant.\n\nQuestion: {query}\n\nContext:\n{context}\n\nPlease provide a comprehensive answer that:\n1. Uses information from all relevant chunks\n2. Maintains proper technical context\n3. Cites specific features and capabilities\n4. Indicates confidence level for technical claims\n5. Preserves technical terminology exactly as specified\n6. Focuses on accuracy and technical details\n7. Don't offer any assumptions or interpretations\n8. Don't repeat any of the input text\n9. Don't make up a filename or assume a specific format\n10. Format your response with proper paragraphs and line breaks for readability\n11. Use bullet points or numbered lists when appropriate\n12. Add empty lines between paragraphs and sections\n\nAnswer:"
