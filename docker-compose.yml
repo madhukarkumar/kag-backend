@@ -1,14 +1,28 @@
+# This docker-compose.yml is for local development only.
+# Production deployment on Railway.app uses its own Redis service and environment configuration.
+# Do not use this file for production deployment.
+
 version: '3.8'
 
 services:
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   backend:
     build: .
     ports:
       - "8000:8000"
     environment:
-      - REDIS_URL=redis://localhost:6379/0
-      - CELERY_BROKER_URL=redis://localhost:6379/0
-      - CELERY_RESULT_BACKEND=redis://localhost:6379/0
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - SINGLESTORE_HOST=${SINGLESTORE_HOST}
@@ -19,8 +33,32 @@ services:
       - API_KEY=${API_KEY}
     volumes:
       - ./documents:/app/documents  # For persistent document storage
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "-H", "X-API-Key: ${API_KEY}", "http://localhost:8000/kbdata"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+  celery:
+    build: .
+    command: celery -A celery_app worker --loglevel=info
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - SINGLESTORE_HOST=${SINGLESTORE_HOST}
+      - SINGLESTORE_PORT=${SINGLESTORE_PORT}
+      - SINGLESTORE_USER=${SINGLESTORE_USER}
+      - SINGLESTORE_PASSWORD=${SINGLESTORE_PASSWORD}
+      - SINGLESTORE_DATABASE=${SINGLESTORE_DATABASE}
+      - API_KEY=${API_KEY}
+    volumes:
+      - ./documents:/app/documents
+    depends_on:
+      redis:
+        condition: service_healthy

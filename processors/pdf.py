@@ -3,6 +3,7 @@ import json
 import logging
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
+import re
 import fitz  # PyMuPDF
 from openai import OpenAI
 from processors.knowledge import KnowledgeGraphGenerator
@@ -202,36 +203,39 @@ def get_semantic_chunks(text: str) -> List[str]:
             return [text]
             
         logger.info(f"Raw Gemini response: {response.text}")
-            
-        # Split response into chunks
+        
+        # Primary chunking method: Split using '---' separator
         chunks = [chunk.strip() for chunk in response.text.split('---') if chunk.strip()]
         
-        if not chunks:
-            logger.warning("No valid chunks found in Gemini response, falling back to basic chunking")
-            return [text]
-            
+        # Secondary method: If Gemini didn't provide expected separators, split into sentence-based chunks
+        if not chunks or len(chunks) < 2:
+            logger.warning("No valid '---' chunk markers found, falling back to sentence-based chunking.")
+            sentences = re.split(r'(?<=[.!?])\s+', text)  # Splits at sentence endings
+            chunks = [" ".join(sentences[i:i+5]) for i in range(0, len(sentences), 5)]  # Group sentences
+        
         # Apply size constraints from config
-        filtered_chunks = []
+        valid_chunks = []
         for chunk in chunks:
             if chunking_config['min_chunk_size'] <= len(chunk) <= chunking_config['max_chunk_size']:
-                filtered_chunks.append(chunk)
+                valid_chunks.append(chunk)
             else:
                 logger.warning(f"Chunk size {len(chunk)} outside configured bounds, skipping")
         
-        # If all chunks were filtered out, fall back to basic chunking
-        if not filtered_chunks:
+        # If all chunks were filtered out, revert to the entire text as a single chunk
+        if not valid_chunks:
             logger.warning("All chunks filtered out, falling back to basic chunking")
             return [text]
-            
+        
         # Log each chunk
-        logger.info(f"Generated {len(filtered_chunks)} semantic chunks:")
-        for i, chunk in enumerate(filtered_chunks, 1):
-            logger.info(f"Chunk {i}/{len(filtered_chunks)}:")
+        logger.info(f"Generated {len(valid_chunks)} semantic chunks:")
+        for i, chunk in enumerate(valid_chunks, 1):
+            logger.info(f"Chunk {i}/{len(valid_chunks)}:")
             logger.info(f"Length: {len(chunk)} characters")
-            logger.info(f"Content: {chunk}")
+            logger.info(f"Content: {chunk[:200]}...")  # Log only first 200 characters for brevity
             logger.info("-" * 80)
-            
-        return filtered_chunks
+        
+        return valid_chunks
+
     except Exception as e:
         logger.error(f"Error in semantic chunking: {str(e)}")
         logger.warning("Falling back to basic chunking")
