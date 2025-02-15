@@ -24,30 +24,18 @@ echo "Starting Celery worker..."
 celery -A celery_app worker --loglevel=INFO --uid=1000 --gid=1000 > /app/logs/celery.log 2>&1 &
 CELERY_PID=$!
 
-# Start FastAPI application
-echo "Starting FastAPI application..."
-PORT="${PORT:-8000}"  # Use Railway's PORT env var or default to 8000
-uvicorn main:app --host 0.0.0.0 --port $PORT --log-level debug > /app/logs/fastapi.log 2>&1 &
-FASTAPI_PID=$!
-
-# Function to forward signals to child processes
+# Function to cleanup background processes
 cleanup() {
     echo "Shutting down services..."
     kill $REDIS_PID
     kill $CELERY_PID
-    kill $FASTAPI_PID
     exit 0
 }
 
 # Set up signal handling
 trap cleanup SIGTERM SIGINT SIGQUIT
 
-# Monitor logs
-echo "Monitoring services..."
-tail -f /app/logs/*.log &
-
-# Wait for any process to exit
-wait -n
-
-# Exit with status of process that exited first
-exit $?
+# Start FastAPI application in foreground
+echo "Starting FastAPI application..."
+PORT="${PORT:-8000}"  # Use Railway's PORT env var or default to 8000
+exec uvicorn main:app --host 0.0.0.0 --port $PORT --log-level info

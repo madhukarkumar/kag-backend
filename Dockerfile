@@ -10,27 +10,25 @@ RUN apt-get update && apt-get install -y \
 # Create non-root user
 RUN useradd -m -u 1000 appuser
 
-# Set up app directory
+# Set up app directory and required subdirectories
 WORKDIR /app
-
-# Create necessary directories with proper permissions
-RUN mkdir -p /app/documents /app/logs && \
+RUN mkdir -p /app/documents /app/logs /app/config && \
     chown -R appuser:appuser /app && \
     chmod -R 755 /app
 
 # Copy requirements first to leverage Docker cache
-COPY requirements.txt .
+COPY --chown=appuser:appuser requirements.txt .
 
 # Install Python dependencies
 RUN pip install -r requirements.txt
 
 # Copy the rest of the application
-COPY . .
+COPY --chown=appuser:appuser . .
 
-# Set proper permissions
-RUN chown -R appuser:appuser /app && \
-    chmod +x start_services.sh && \
-    chmod 644 redis.conf
+# Ensure proper permissions
+RUN chmod +x start_services.sh && \
+    chmod 644 redis.conf && \
+    chmod -R 777 /app/documents /app/logs
 
 # Switch to non-root user
 USER appuser
@@ -39,4 +37,4 @@ USER appuser
 EXPOSE 8000
 
 # Start services using the script
-ENTRYPOINT ["./start_services.sh"]
+CMD ["./start_services.sh"]
