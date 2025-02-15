@@ -8,7 +8,7 @@ echo "Created required directories"
 
 # Start Redis
 echo "Starting Redis..."
-redis-server &
+redis-server /app/redis.conf &
 REDIS_PID=$!
 
 # Wait for Redis to be ready
@@ -21,7 +21,7 @@ echo "Redis is ready!"
 
 # Start Celery worker with detailed logging
 echo "Starting Celery worker..."
-celery -A celery_app worker --loglevel=INFO > /app/logs/celery.log 2>&1 &
+celery -A celery_app worker --loglevel=INFO --uid=1000 --gid=1000 > /app/logs/celery.log 2>&1 &
 CELERY_PID=$!
 
 # Start FastAPI application

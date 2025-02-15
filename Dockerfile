@@ -7,11 +7,15 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user
+RUN useradd -m -u 1000 appuser
+
 # Set up app directory
 WORKDIR /app
 
 # Create necessary directories with proper permissions
 RUN mkdir -p /app/documents /app/logs && \
+    chown -R appuser:appuser /app && \
     chmod -R 755 /app
 
 # Copy requirements first to leverage Docker cache
@@ -23,8 +27,13 @@ RUN pip install -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Make scripts executable
-RUN chmod +x start_services.sh
+# Set proper permissions
+RUN chown -R appuser:appuser /app && \
+    chmod +x start_services.sh && \
+    chmod 644 redis.conf
+
+# Switch to non-root user
+USER appuser
 
 # Expose the API port
 EXPOSE 8000
