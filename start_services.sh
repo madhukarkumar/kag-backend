@@ -6,31 +6,6 @@ mkdir -p /app/documents
 mkdir -p /app/logs
 echo "Created required directories"
 
-# Start Redis
-echo "Starting Redis..."
-redis-server /app/redis.conf &
-REDIS_PID=$!
-
-# Wait for Redis with timeout
-echo "Waiting for Redis to be ready..."
-REDIS_TIMEOUT=30
-REDIS_READY=0
-
-for i in $(seq 1 $REDIS_TIMEOUT); do
-    if redis-cli ping > /dev/null 2>&1; then
-        REDIS_READY=1
-        echo "Redis is ready!"
-        break
-    fi
-    echo "Redis not ready - waiting... (attempt $i/$REDIS_TIMEOUT)"
-    sleep 1
-done
-
-if [ $REDIS_READY -eq 0 ]; then
-    echo "Redis failed to start after $REDIS_TIMEOUT seconds"
-    exit 1
-fi
-
 # Start Celery worker with detailed logging
 echo "Starting Celery worker..."
 celery -A celery_app worker --loglevel=INFO --uid=1000 --gid=1000 > /app/logs/celery.log 2>&1 &
@@ -39,7 +14,6 @@ CELERY_PID=$!
 # Function to cleanup background processes
 cleanup() {
     echo "Shutting down services..."
-    kill $REDIS_PID
     kill $CELERY_PID
     exit 0
 }
