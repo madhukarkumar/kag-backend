@@ -11,13 +11,25 @@ echo "Starting Redis..."
 redis-server /app/redis.conf &
 REDIS_PID=$!
 
-# Wait for Redis to be ready
+# Wait for Redis with timeout
 echo "Waiting for Redis to be ready..."
-until redis-cli ping > /dev/null 2>&1; do
-  echo "Redis not ready - waiting..."
-  sleep 1
+REDIS_TIMEOUT=30
+REDIS_READY=0
+
+for i in $(seq 1 $REDIS_TIMEOUT); do
+    if redis-cli ping > /dev/null 2>&1; then
+        REDIS_READY=1
+        echo "Redis is ready!"
+        break
+    fi
+    echo "Redis not ready - waiting... (attempt $i/$REDIS_TIMEOUT)"
+    sleep 1
 done
-echo "Redis is ready!"
+
+if [ $REDIS_READY -eq 0 ]; then
+    echo "Redis failed to start after $REDIS_TIMEOUT seconds"
+    exit 1
+fi
 
 # Start Celery worker with detailed logging
 echo "Starting Celery worker..."

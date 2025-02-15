@@ -7,6 +7,11 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Create Redis directories and set permissions
+RUN mkdir -p /var/run/redis /var/log/redis /var/lib/redis && \
+    chown -R redis:redis /var/run/redis /var/log/redis /var/lib/redis && \
+    chmod 777 /var/run/redis /var/log/redis /var/lib/redis
+
 # Create non-root user
 RUN useradd -m -u 1000 appuser
 
