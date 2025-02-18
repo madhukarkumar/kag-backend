@@ -9,10 +9,17 @@ from openai import OpenAI
 from processors.knowledge import KnowledgeGraphGenerator
 import google.generativeai as genai
 from google.generativeai.types import GenerateContentResponse
+from dotenv import load_dotenv
+from llama_cloud_services import LlamaParse
+from llama_index.core import SimpleDirectoryReader
+import time
 
 from db import DatabaseConnection
 from core.config import config
 from core.models import Document, DocumentChunk
+
+# Load environment variables
+load_dotenv()
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -24,6 +31,11 @@ os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable is required")
+
+# Configure LlamaParse
+LLAMA_CLOUD_API_KEY = os.getenv("LLAMA_CLOUD_API_KEY")
+if not LLAMA_CLOUD_API_KEY:
+    raise ValueError("LLAMA_CLOUD_API_KEY environment variable is required")
 
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -413,6 +425,100 @@ def process_chunks_with_overlap(
     
     return enhanced_chunks
 
+def llamaparse_pdf(file_path: str, max_retries: int = 3) -> str:
+    """
+    Parse PDF using LlamaParse API and return markdown text.
+    
+    Args:
+        file_path: Path to the PDF file
+        max_retries: Maximum number of retry attempts (default: 3)
+        
+    Returns:
+        str: Parsed markdown text from the PDF
+        
+    Raises:
+        PDFProcessingError: If parsing fails
+    """
+    start_time = datetime.now()
+    
+    try:
+        logger.info("=" * 80)
+        logger.info("Starting LlamaParse PDF processing")
+        logger.info(f"Input file: {file_path}")
+        logger.info("=" * 80)
+        
+        # Initialize LlamaParse with markdown output
+        logger.info("Step 1: Initializing LlamaParse parser...")
+        parser = LlamaParse(
+            result_type="markdown",  # Get markdown formatted output
+            num_workers=1,  # Use single worker for better stability
+            check_interval=2.0  # Increase check interval to 2 seconds
+        )
+        logger.info("Parser initialized successfully")
+        
+        # Set up file extractor for PDF
+        logger.info("Step 2: Setting up file extractor...")
+        file_extractor = {".pdf": parser}
+        logger.info("File extractor configured")
+        
+        # Use SimpleDirectoryReader to parse the file with retries
+        logger.info("Step 3: Starting document parsing...")
+        parse_start_time = datetime.now()
+        
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Parsing attempt {attempt + 1}/{max_retries}")
+                documents = SimpleDirectoryReader(
+                    input_files=[file_path], 
+                    file_extractor=file_extractor
+                ).load_data()
+                
+                if documents and len(documents) > 0 and documents[0].text.strip():
+                    content = documents[0].text
+                    parse_duration = (datetime.now() - parse_start_time).total_seconds()
+                    total_duration = (datetime.now() - start_time).total_seconds()
+                    
+                    logger.info("=" * 80)
+                    logger.info("LlamaParse processing completed successfully:")
+                    logger.info(f"Parsing attempt: {attempt + 1}/{max_retries}")
+                    logger.info(f"Parsing time: {parse_duration:.2f} seconds")
+                    logger.info(f"Total processing time: {total_duration:.2f} seconds")
+                    logger.info(f"Content length: {len(content)} characters")
+                    logger.info("=" * 80)
+                    
+                    return content
+                else:
+                    last_error = "No content extracted from PDF"
+                    logger.warning(f"Attempt {attempt + 1} failed: Empty content received")
+                    
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                
+            # Wait before retry if not the last attempt
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # Exponential backoff
+                logger.info(f"Waiting {wait_time} seconds before next attempt...")
+                time.sleep(wait_time)
+        
+        # If we get here, all retries failed
+        total_duration = (datetime.now() - start_time).total_seconds()
+        error_msg = f"All {max_retries} parsing attempts failed. Last error: {last_error}"
+        logger.error("=" * 80)
+        logger.error(f"Error in LlamaParse processing after {total_duration:.2f} seconds:")
+        logger.error(error_msg)
+        logger.error("=" * 80)
+        raise PDFProcessingError(error_msg)
+            
+    except Exception as e:
+        total_duration = (datetime.now() - start_time).total_seconds()
+        logger.error("=" * 80)
+        logger.error(f"Error in LlamaParse processing after {total_duration:.2f} seconds:")
+        logger.error(str(e))
+        logger.error("=" * 80)
+        raise PDFProcessingError(f"Failed to parse PDF with LlamaParse: {str(e)}")
+
 def process_pdf(doc_id: int, task=None):
     """Process PDF file through all steps"""
     try:
@@ -436,9 +542,10 @@ def process_pdf(doc_id: int, task=None):
             update_processing_status(doc_id, "processing")
             
             # Extract text from PDF
-            text = ""
-            for page in doc:
-                text += page.get_text()
+            # text = ""
+            # for page in doc:
+            #     text += page.get_text()
+            text = llamaparse_pdf(file_path)
             
             # Analyze document structure
             structure = analyze_document_structure(doc)
