@@ -31,6 +31,7 @@ services:
       - SINGLESTORE_PASSWORD=${SINGLESTORE_PASSWORD}
       - SINGLESTORE_DATABASE=${SINGLESTORE_DATABASE}
       - API_KEY=${API_KEY}
+      - LLAMA_CLOUD_API_KEY=${LLAMA_CLOUD_API_KEY}
     volumes:
       - ./documents:/app/documents  # For persistent document storage
     depends_on:
@@ -57,6 +58,7 @@ services:
       - SINGLESTORE_PASSWORD=${SINGLESTORE_PASSWORD}
       - SINGLESTORE_DATABASE=${SINGLESTORE_DATABASE}
       - API_KEY=${API_KEY}
+      - LLAMA_CLOUD_API_KEY=${LLAMA_CLOUD_API_KEY}
     volumes:
       - ./documents:/app/documents
     depends_on:
