@@ -25,12 +25,21 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 # Configure CORS
+origins = [
+    "http://localhost:8080",  # Local development
+    "http://localhost:3000",  # Alternative local port
+    "https://singlestore-kag.vercel.app",  # Production frontend
+    "https://kag-frontend-production.up.railway.app"  # Railway frontend
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["Content-Type", "X-API-Key"],
+    max_age=3600,  # Cache preflight requests for 1 hour
 )
 
 class DocumentProcessor:
