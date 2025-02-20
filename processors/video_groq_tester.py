@@ -257,15 +257,14 @@ def main():
         audio_path = extract_audio(video_path)
         transcript = None
 
-        # Temporarily skip Groq transcription
-        """
         # Try Groq first
-        logger.info("Attempting transcription with Groq")
-        groq_client = Groq(api_key=os.getenv('GROQ_API_KEY'))
-        transcript, success = transcribe_with_groq(groq_client, audio_path)
-        """
+        # logger.info("Attempting transcription with Groq")
+        # groq_client = Groq(api_key=os.getenv('GROQ_API_KEY'))
+        # transcript, success = transcribe_with_groq(groq_client, audio_path)
         
-        # Go directly to OpenAI
+        # If Groq fails, try OpenAI
+        # if not success:
+        logger.info("Attempting transcription with OpenAI")
         transcript = transcribe_with_openai(audio_path)
 
         if transcript:
