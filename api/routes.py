@@ -14,7 +14,7 @@ from core.models import (
     GraphResponse, GraphData, GraphNode, GraphLink, 
     ProcessingStatusResponse
 )
-from datetime import datetime
+from datetime import datetime, timedelta
 from processors.pdf import (
     save_pdf, create_document_record, get_processing_status, 
     cleanup_processing, PDFProcessingError
@@ -22,6 +22,7 @@ from processors.pdf import (
 from tasks.pdf_tasks import process_pdf_task
 from celery.result import AsyncResult
 from api.auth import get_api_key
+from utils.status_cache import get_status_from_cache as get_cached_status, update_status_cache
 
 # Initialize logging
 logger = logging.getLogger(__name__)
@@ -87,32 +88,28 @@ class TaskResponse(BaseModel):
     status: str
     message: Optional[str] = None
 
-# In-memory status cache
-processing_status_cache: Dict[int, ProcessingStatusResponse] = {}
-
-async def update_status_cache(doc_id: int, status: ProcessingStatusResponse):
-    """Update the in-memory status cache"""
-    processing_status_cache[doc_id] = status
-
 @app.get("/processing-status/{doc_id}", response_model=ProcessingStatusResponse)
 async def get_status(doc_id: int):
     """Get current processing status"""
     try:
-        # First check the cache
-        if doc_id in processing_status_cache:
-            return processing_status_cache[doc_id]
+        # Check cache first
+        cached_status = get_cached_status(doc_id)
+        if cached_status is not None:
+            # Only use cache for completed or failed states
+            if cached_status.get("currentStep") in ["completed", "failed"]:
+                return cached_status
             
-        # If not in cache, get from database
+        # Get fresh status from database
         logger.info(f"Getting processing status for doc_id: {doc_id}")
         try:
             status = get_processing_status(doc_id)
-            # Update cache
-            await update_status_cache(doc_id, status)
+            # Update cache with new status
+            update_status_cache(doc_id, status)
             return status
         except Exception as e:
-            # If database query fails, return last known status from cache
-            if doc_id in processing_status_cache:
-                return processing_status_cache[doc_id]
+            # If database query fails, return last known status from cache if available
+            if cached_status is not None:
+                return cached_status
             raise
             
     except ValueError as e:
@@ -136,7 +133,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         logger.info(f"Created document record with ID: {doc_id}")
         
         # Initialize status in cache
-        await update_status_cache(doc_id, ProcessingStatusResponse(
+        update_status_cache(doc_id, ProcessingStatusResponse(
             currentStep="started",
             fileName=file.filename
         ))

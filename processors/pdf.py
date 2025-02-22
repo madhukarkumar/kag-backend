@@ -18,6 +18,8 @@ from db import DatabaseConnection
 from core.config import config
 from core.models import Document, DocumentChunk
 
+from utils.status_cache import update_status_cache
+
 # Load environment variables
 load_dotenv()
 
@@ -130,12 +132,18 @@ def update_processing_status(doc_id: int, step: str, error_message: Optional[str
         conn.connect()
         query = """
             UPDATE ProcessingStatus 
-            SET current_step = %s,
-                error_message = %s,
-                updated_at = NOW()
+            SET current_step = %s, error_message = %s, updated_at = CURRENT_TIMESTAMP
             WHERE doc_id = %s
         """
         conn.execute_query(query, (step, error_message, doc_id))
+        logger.info(f"Updated processing status for doc_id {doc_id} to {step}")
+        
+        # Get the updated status to sync with cache
+        status = get_processing_status(doc_id)
+        
+        # Update the cache with the new module
+        update_status_cache(doc_id, status)
+            
     finally:
         conn.disconnect()
 
@@ -146,7 +154,7 @@ def get_processing_status(doc_id: int) -> Dict[str, Any]:
         conn.connect()
         query = """
             SELECT current_step, error_message, file_name, 
-                   TIMESTAMPDIFF(SECOND, last_updated, NOW()) as seconds_since_update
+                   TIMESTAMPDIFF(SECOND, updated_at, NOW()) as seconds_since_update
             FROM ProcessingStatus
             WHERE doc_id = %s
         """
@@ -247,10 +255,9 @@ def get_semantic_chunks(text: str) -> List[str]:
             logger.info("-" * 80)
         
         return valid_chunks
-
     except Exception as e:
-        logger.error(f"Error in semantic chunking: {str(e)}")
-        logger.warning("Falling back to basic chunking")
+        logger.error(f"Error during semantic chunking: {str(e)}")
+        logger.warning("Falling back to basic chunking due to error")
         return [text]
 
 def analyze_document_structure(doc: fitz.Document) -> Dict[str, Any]:
