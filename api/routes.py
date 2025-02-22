@@ -113,8 +113,9 @@ async def get_status(doc_id: int):
             raise
             
     except ValueError as e:
-        logger.error(f"Processing status not found: {str(e)}")
-        raise HTTPException(status_code=404, detail=str(e))
+        logger.error(f"Processing status not found for doc_id {doc_id}: {str(e)}")
+        # Return an empty processing status instead of a 404 error
+        return ProcessingStatusResponse(currentStep="", fileName="")
     except Exception as e:
         logger.error(f"Error getting processing status: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -528,3 +529,40 @@ async def update_config(config: FullConfig):
     except Exception as e:
         logger.error(f"Error updating config: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error updating config: {str(e)}")
+
+# Added doc-chunks endpoint
+import json
+from typing import List
+from pydantic import BaseModel
+
+class DocChunk(BaseModel):
+    content: str
+
+class DocChunksResponse(BaseModel):
+    chunks: List[DocChunk]
+
+@app.get("/doc-chunks", response_model=DocChunksResponse, dependencies=[Depends(get_api_key)])
+async def get_doc_chunks(doc_id: int = Query(..., description="Document ID for which to retrieve chunks")):
+    """
+    Retrieve document chunks for a given doc_id.
+    Returns a list of chunks with content and embedding.
+    """
+    try:
+        with DatabaseConnection() as conn:
+            query = "SELECT content FROM Document_Embeddings WHERE doc_id = %s"
+            logger.info(f"Executing query for doc_id {doc_id}: {query}")
+            rows = conn.execute_query(query, (doc_id,))
+            logger.info(f"Query returned {len(rows)} rows")
+            
+            chunks = []
+            for i, row in enumerate(rows):
+                chunks.append({
+                    "content": row[0]
+                })
+                logger.debug(f"Processed chunk {i+1}: content length={len(row[0])}")
+            
+            logger.info(f"Successfully processed {len(chunks)} chunks")
+            return {"chunks": chunks}
+    except Exception as e:
+        logger.error(f"Error retrieving document chunks: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve document chunks: {str(e)}")
