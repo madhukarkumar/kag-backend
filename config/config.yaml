@@ -27,7 +27,7 @@ retrieval:
     exact_phrase_weight: 2.0
     single_term_weight: 1.5
     proximity_distance: 5
-    min_score_threshold: 0.15
+    min_score_threshold: 0.05
     min_similarity_score: 0.4
     context_window_size: 3
   response_generation:

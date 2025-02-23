@@ -351,10 +351,8 @@ def get_semantic_chunks(text: str, doc_id: Optional[int] = None) -> List[str]:
         logger.info(f"Total characters in chunks: {total_chars}")
         logger.info(f"Average chunk size: {total_chars / len(valid_chunks):.0f} characters")
         
-        # Write chunks to files for troubleshooting
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        logger.info(f"Chunk statistics:")
         for i, chunk in enumerate(valid_chunks):
-            write_chunk_to_file(chunk, i, timestamp)
             logger.info(f"Chunk {i}/{len(valid_chunks)}:")
             logger.info(f"Length: {len(chunk)} characters")
             logger.info(f"Content: {chunk[:200]}...")
@@ -369,10 +367,6 @@ def get_semantic_chunks(text: str, doc_id: Optional[int] = None) -> List[str]:
             window_size=chunking_config['max_chunk_size'],
             overlap=chunking_config['overlap_size']
         )
-        # Write the fallback chunks
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        for i, chunk in enumerate(chunks):
-            write_chunk_to_file(chunk, i, timestamp)
         return chunks
 
 def analyze_document_structure(doc: fitz.Document) -> Dict[str, Any]:
@@ -622,8 +616,8 @@ def llamaparse_pdf(file_path: str, doc_id: int, max_retries: int = 3) -> str:
                 parse_duration = (datetime.now() - parse_start_time).total_seconds()
                 total_duration = (datetime.now() - start_time).total_seconds()
                 
-                # Write LlamaParse output to file
-                output_file = write_llamaparse_output(content, doc_id)
+                # # Write LlamaParse output to file
+                # output_file = write_llamaparse_output(content, doc_id)
                 
                 logger.info("=" * 80)
                 logger.info("LlamaParse processing completed successfully:")
@@ -631,7 +625,7 @@ def llamaparse_pdf(file_path: str, doc_id: int, max_retries: int = 3) -> str:
                 logger.info(f"Document content size: {len(content)} bytes")
                 logger.info(f"Parsing time: {parse_duration:.2f} seconds")
                 logger.info(f"Total processing time: {total_duration:.2f} seconds")
-                logger.info(f"Output written to: {output_file}")
+                # logger.info(f"Output written to: {output_file}")
                 logger.info("=" * 80)
                 
                 return content

@@ -99,9 +99,9 @@ class RAGQueryEngine:
             # Set vector parameter
             db.execute_query("SET @qvec = %s :> VECTOR(1536);", (vector_param,))
             
-            # Execute search
+            # Execute search with diversity
             vector_search_sql = """
-                SELECT doc_id, content, (embedding <*> @qvec) AS score
+                SELECT DISTINCT doc_id, content, (embedding <*> @qvec) AS score
                 FROM Document_Embeddings
                 ORDER BY score DESC
                 LIMIT %s;
@@ -109,6 +109,10 @@ class RAGQueryEngine:
             
             results = db.execute_query(vector_search_sql, (limit,))
             
+            if results is None:
+                logger.warning("Vector search returned no results")
+                return []
+                
             return [
                 {"doc_id": r[0], "content": r[1], "score": r[2]}
                 for r in results
@@ -192,12 +196,16 @@ class RAGQueryEngine:
             logger.info(f"Text search query: {formatted_query}")
             
             sql = """
-                SELECT 
-                    doc_id,
-                    content,
-                    MATCH(TABLE Document_Embeddings) AGAINST(%s) as text_score
-                FROM Document_Embeddings 
-                WHERE MATCH(TABLE Document_Embeddings) AGAINST(%s)
+                WITH TextMatches AS (
+                    SELECT DISTINCT
+                        doc_id,
+                        content,
+                        MATCH(TABLE Document_Embeddings) AGAINST(%s) as text_score
+                    FROM Document_Embeddings 
+                    WHERE MATCH(TABLE Document_Embeddings) AGAINST(%s)
+                    AND LENGTH(content) > 100
+                )
+                SELECT * FROM TextMatches
                 ORDER BY text_score DESC
                 LIMIT %s;
             """
@@ -266,22 +274,31 @@ class RAGQueryEngine:
                     text_weight * text_result.get('text_score', 0)
                 )
                 
-                # Only include results that meet the minimum score threshold
-                min_score = self.search_config.get('min_score_threshold', 0.15)
-                if combined_score >= min_score:
-                    merged.append({
-                        'doc_id': doc_id,
-                        'content': vector_result.get('content') or text_result.get('content'),
-                        'vector_score': vector_result.get('vector_score', 0),
-                        'text_score': text_result.get('text_score', 0),
-                        'combined_score': combined_score
-                    })
+                # Include all results initially
+                merged.append({
+                    'doc_id': doc_id,
+                    'content': vector_result.get('content') or text_result.get('content'),
+                    'vector_score': vector_result.get('vector_score', 0),
+                    'text_score': text_result.get('text_score', 0),
+                    'combined_score': combined_score
+                })
             
             # Sort by combined score
             merged.sort(key=lambda x: x['combined_score'], reverse=True)
-            logger.info(f"Total results after merging and filtering: {len(merged)}")
             
-            return merged
+            # Take top results but ensure we have at least 3 sources
+            min_sources = 3
+            min_score = self.search_config.get('min_score_threshold', 0.15)
+            
+            # First, try to get sources above threshold
+            filtered_results = [r for r in merged if r['combined_score'] >= min_score]
+            
+            # If we don't have enough results above threshold, take the top scoring ones regardless
+            if len(filtered_results) < min_sources:
+                filtered_results = merged[:min_sources]
+            
+            logger.info(f"Total results after merging and filtering: {len(filtered_results)}")
+            return filtered_results
             
         except Exception as e:
             logger.error(f"Error merging results: {str(e)}")
@@ -367,10 +384,10 @@ class RAGQueryEngine:
                 merged_results = self.merge_search_results(vector_results, text_results)
                 logger.info(f"After merging: {len(merged_results)} results")
                 
-                # Sort by combined score and limit to top_k
+                # Sort by combined score and ensure minimum of 3 sources
                 merged_results.sort(key=lambda x: x['combined_score'], reverse=True)
-                merged_results = merged_results[:top_k]
-                logger.info(f"After limiting to top_k: {len(merged_results)} results")
+                merged_results = merged_results[:max(top_k, 3)]  # Ensure at least 3 sources
+                logger.info(f"After limiting to max(top_k, 3): {len(merged_results)} results")
                 
                 # Build context with SearchResult objects
                 formatted_results = []
