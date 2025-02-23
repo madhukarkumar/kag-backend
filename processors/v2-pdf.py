@@ -20,6 +20,11 @@ from core.models import Document, DocumentChunk
 
 from utils.status_cache import update_status_cache
 
+# New imports for semantic chunking
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+
 # Load environment variables
 load_dotenv()
 
@@ -41,65 +46,8 @@ if not LLAMA_CLOUD_API_KEY:
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-def validate_content_coverage(original_text: str, chunks: List[str]) -> Tuple[bool, float]:
-    """
-    Validate that chunks cover the original text content.
-    Returns (is_valid, coverage_percentage)
-    """
-    # Remove whitespace and normalize for comparison
-    original_cleaned = ''.join(original_text.split())
-    chunks_combined = ''.join([''.join(chunk.split()) for chunk in chunks])
-    
-    # Calculate coverage percentage
-    coverage = len(chunks_combined) / len(original_cleaned) if len(original_cleaned) > 0 else 0
-    
-    logger.info(f"Content coverage validation:")
-    logger.info(f"Original text length: {len(original_text)}")
-    logger.info(f"Combined chunks length: {sum(len(chunk) for chunk in chunks)}")
-    logger.info(f"Coverage percentage: {coverage:.2%}")
-    
-    return coverage >= 0.95, coverage
-
-def sliding_window_chunking(text: str, window_size: int = 500, overlap: int = 50) -> List[str]:
-    """
-    Fallback chunking method using sliding window approach.
-    """
-    chunks = []
-    start = 0
-    
-    while start < len(text):
-        # Find the end of the current window
-        end = min(start + window_size, len(text))
-        
-        # If this isn't the last chunk, try to break at a sentence boundary
-        if end < len(text):
-            # Look for sentence endings within the last 100 characters of the window
-            look_back = min(100, end - start)
-            sentence_end = text.rfind('. ', end - look_back, end)
-            if sentence_end != -1:
-                end = sentence_end + 1
-        
-        chunk = text[start:end].strip()
-        if chunk:  # Only add non-empty chunks
-            chunks.append(chunk)
-        
-        # Move the window, accounting for overlap
-        start = end - overlap if end < len(text) else end
-    
-    logger.info(f"Sliding window chunking produced {len(chunks)} chunks")
-    return chunks
-
-def write_llamaparse_output(content: str, doc_id: int) -> str:
-    """Write LlamaParse output to a file for analysis"""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"llamaparse_output_{doc_id}_{timestamp}.txt"
-    filepath = os.path.join(DOCUMENTS_DIR, filename)
-    
-    with open(filepath, "w") as f:
-        f.write(content)
-    
-    logger.info(f"Wrote LlamaParse output to {filepath}")
-    return filepath
+# Initialize Sentence Transformer model for semantic chunking
+model = SentenceTransformer('all-MiniLM-L6-v2')
 
 class PDFProcessingError(Exception):
     pass
@@ -252,129 +200,121 @@ def cleanup_processing(doc_id: int):
     finally:
         conn.disconnect()
 
-def write_chunk_to_file(chunk: str, index: int, timestamp: str) -> None:
-    """Write a chunk to a file for troubleshooting"""
-    chunk_dir = os.path.join(DOCUMENTS_DIR, "chunks")
-    os.makedirs(chunk_dir, exist_ok=True)
+# New function for extracting section text
+def extract_section_text(text: str, section: Dict[str, Any]) -> str:
+    """Extract text for a specific section based on its title."""
+    title = section['title']
+    start_idx = text.find(title)
+    if start_idx == -1:
+        return text
     
-    filename = f"chunk_{timestamp}_{index}.txt"
-    filepath = os.path.join(chunk_dir, filename)
+    end_idx = len(text)
+    for next_section in section.get('subsections', []):
+        next_idx = text.find(next_section['title'], start_idx + len(title))
+        if next_idx != -1 and next_idx < end_idx:
+            end_idx = next_idx
     
-    with open(filepath, "w") as f:
-        f.write(chunk)
-    
-    logger.info(f"Wrote chunk {index} to {filepath}")
+    return text[start_idx:end_idx].strip()
 
-def get_semantic_chunks(text: str, doc_id: Optional[int] = None) -> List[str]:
-    """
-    Use Gemini to get semantic chunks from text.
-    Falls back to sliding window approach if semantic chunking fails.
-    """
+# New function for paragraph-based chunking (fallback)
+def paragraph_chunking(text: str, min_size: int = 200, max_size: int = 1500) -> List[Dict[str, Any]]:
+    """Split text into paragraphs as a fallback."""
+    paragraphs = text.split('\n\n')
+    chunks = []
+    current_chunk = ""
+    
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        if len(current_chunk) + len(para) <= max_size:
+            current_chunk += '\n\n' + para
+        else:
+            if len(current_chunk) >= min_size:
+                chunks.append({"content": current_chunk.strip(), "metadata": {"section": "Paragraph"}})
+            current_chunk = para
+    
+    if len(current_chunk) >= min_size:
+        chunks.append({"content": current_chunk.strip(), "metadata": {"section": "Paragraph"}})
+    
+    return chunks
+
+# Updated get_semantic_chunks function with sentence embeddings and document structure
+def get_semantic_chunks(text: str, structure: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Split text into semantic chunks using embeddings and document structure."""
     try:
-        # Log input text stats
-        logger.info(f"Input text statistics:")
-        logger.info(f"Total length: {len(text)} characters")
-        logger.info(f"Number of paragraphs: {text.count('\n\n')}")
-        
-        # Get chunking configuration
         chunking_config = config.knowledge_creation['chunking']
+        min_size, max_size = chunking_config['min_chunk_size'], chunking_config['max_chunk_size']
         
-        prompt = f"""Split the following text into semantic chunks. Each chunk should be a coherent unit of information.
-        Ensure you include ALL of the input text in the output chunks.
-        Follow these rules strictly:
-        {config.get_chunking_rules()}
-
-        Return only the chunks, one per line, with '---' as separator.
+        # Split text into sections based on structure
+        sections = []
+        for section in structure['sections']:
+            section_text = extract_section_text(text, section)
+            sections.append({
+                "title": section['title'],
+                "content": section_text,
+                "level": section['level']
+            })
         
-        Text to split:
-        {text}
-        """
+        if not sections:
+            sections = [{"title": "Full Document", "content": text, "level": 1}]
         
-        logger.info("Sending request to Gemini for semantic chunking")
-        logger.info(f"Input text length: {len(text)} characters")
-        logger.info(f"Input text preview: {text[:200]}...")
-        
-        # Initialize Gemini model
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        
-        response = model.generate_content(prompt)
-        logger.info("Received response from Gemini")
-        
-        if not response.text:
-            logger.warning("Gemini returned empty response, falling back to basic chunking")
-            return [text]
+        # Process each section into semantic chunks
+        all_chunks = []
+        for section in sections:
+            sentences = re.split(r'(?<=[.!?])\s+', section['content'].strip())
+            if not sentences:
+                continue
             
-        logger.info(f"Raw Gemini response: {response.text}")
-        
-        # Primary chunking method: Split using '---' separator
-        chunks = [chunk.strip() for chunk in response.text.split('---') if chunk.strip()]
-        
-        # Secondary method: If Gemini didn't provide expected separators, split into sentence-based chunks
-        if not chunks or len(chunks) < 2:
-            logger.warning("No valid '---' chunk markers found, falling back to sentence-based chunking.")
-            sentences = re.split(r'(?<=[.!?])\s+', text)  # Splits at sentence endings
-            chunks = [" ".join(sentences[i:i+5]) for i in range(0, len(sentences), 5)]  # Group sentences
-        
-        # Apply size constraints from config
-        valid_chunks = []
-        for chunk in chunks:
-            if chunking_config['min_chunk_size'] <= len(chunk) <= chunking_config['max_chunk_size']:
-                valid_chunks.append(chunk)
-            else:
-                logger.warning(f"Chunk size {len(chunk)} outside configured bounds, skipping")
-        
-        # If chunks don't provide good coverage, try sliding window approach
-        if not valid_chunks:
-            logger.warning("All chunks filtered out or poor coverage, falling back to sliding window chunking")
-            valid_chunks = sliding_window_chunking(
-                text,
-                window_size=chunking_config['max_chunk_size'],
-                overlap=chunking_config['overlap_size']
-            )
-        
-        # Validate content coverage
-        is_valid, coverage = validate_content_coverage(text, valid_chunks)
-        if not is_valid:
-            logger.warning(f"Poor content coverage ({coverage:.2%}), falling back to sliding window chunking")
-            valid_chunks = sliding_window_chunking(
-                text,
-                window_size=chunking_config['max_chunk_size'],
-                overlap=chunking_config['overlap_size']
-            )
-            is_valid, coverage = validate_content_coverage(text, valid_chunks)
-            if not is_valid:
-                logger.error(f"Still poor content coverage ({coverage:.2%}) after fallback chunking")
-        
-        # Log chunk statistics
-        logger.info(f"Generated {len(valid_chunks)} chunks:")
-        total_chars = sum(len(chunk) for chunk in valid_chunks)
-        logger.info(f"Total characters in chunks: {total_chars}")
-        logger.info(f"Average chunk size: {total_chars / len(valid_chunks):.0f} characters")
-        
-        # Write chunks to files for troubleshooting
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        for i, chunk in enumerate(valid_chunks):
-            write_chunk_to_file(chunk, i, timestamp)
-            logger.info(f"Chunk {i}/{len(valid_chunks)}:")
-            logger.info(f"Length: {len(chunk)} characters")
-            logger.info(f"Content: {chunk[:200]}...")
-            logger.info("-" * 80)
+            embeddings = model.encode(sentences)
+            chunks = []
+            current_chunk = sentences[0]
+            section_chunks = [{"content": current_chunk, "metadata": {"section": section['title']}}]
             
-        return valid_chunks
+            for i in range(1, len(sentences)):
+                similarity = cosine_similarity([embeddings[i-1]], [embeddings[i]])[0][0]
+                if similarity > 0.7 and len(current_chunk) + len(sentences[i]) <= max_size:
+                    current_chunk += '. ' + sentences[i]
+                    section_chunks[-1]["content"] = current_chunk
+                else:
+                    if len(current_chunk) >= min_size:
+                        chunks.append(section_chunks[-1])
+                    current_chunk = sentences[i]
+                    section_chunks.append({"content": current_chunk, "metadata": {"section": section['title']}})
+            
+            if len(current_chunk) >= min_size:
+                chunks.append(section_chunks[-1])
+            
+            all_chunks.extend(chunks)
+        
+        # Validate chunks
+        all_chunks = validate_chunks(all_chunks, min_size, max_size)
+        
+        logger.info(f"Generated {len(all_chunks)} semantic chunks")
+        return all_chunks
+    
     except Exception as e:
-        logger.error(f"Error during semantic chunking: {str(e)}")
-        logger.warning("Falling back to sliding window chunking due to error")
-        chunks = sliding_window_chunking(
-            text,
-            window_size=chunking_config['max_chunk_size'],
-            overlap=chunking_config['overlap_size']
-        )
-        # Write the fallback chunks
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        for i, chunk in enumerate(chunks):
-            write_chunk_to_file(chunk, i, timestamp)
-        return chunks
+        logger.error(f"Error in semantic chunking: {str(e)}")
+        return paragraph_chunking(text)
 
+# New function to validate chunks
+def validate_chunks(chunks: List[Dict[str, Any]], min_size: int, max_size: int) -> List[Dict[str, Any]]:
+    """Validate and refine chunks to meet size constraints."""
+    valid_chunks = []
+    for chunk in chunks:
+        content = chunk["content"]
+        if min_size <= len(content) <= max_size:
+            valid_chunks.append(chunk)
+        elif len(content) < min_size and valid_chunks:
+            # Merge small chunks with previous
+            valid_chunks[-1]["content"] += '\n' + content
+        elif len(content) > max_size:
+            # Split large chunks using paragraph chunking
+            sub_chunks = paragraph_chunking(content, min_size, max_size)
+            valid_chunks.extend(sub_chunks)
+    return valid_chunks
+
+# Existing analyze_document_structure function (unchanged)
 def analyze_document_structure(doc: fitz.Document) -> Dict[str, Any]:
     """
     Analyze document structure to extract hierarchy and sections.
@@ -432,6 +372,7 @@ def analyze_document_structure(doc: fitz.Document) -> Dict[str, Any]:
     
     return structure
 
+# Existing create_chunk_metadata function (unchanged)
 def create_chunk_metadata(
     doc_id: int,
     position: int,
@@ -470,6 +411,7 @@ def create_chunk_metadata(
         "structural_context": json.dumps(section_path)
     }
 
+# Existing detect_semantic_unit function (unchanged)
 def detect_semantic_unit(content: str) -> str:
     """Detect the semantic unit type of the content."""
     # Simple heuristic-based detection
@@ -488,6 +430,7 @@ def detect_semantic_unit(content: str) -> str:
     else:
         return "general"
 
+# Existing process_chunks_with_overlap function (unchanged)
 def process_chunks_with_overlap(
     chunks: List[str],
     doc_id: int,
@@ -547,13 +490,13 @@ def process_chunks_with_overlap(
     
     return enhanced_chunks
 
-def llamaparse_pdf(file_path: str, doc_id: int, max_retries: int = 3) -> str:
+# Existing llamaparse_pdf function (unchanged)
+def llamaparse_pdf(file_path: str, max_retries: int = 3) -> str:
     """
     Parse PDF using LlamaParse API and return markdown text.
     
     Args:
         file_path: Path to the PDF file
-        doc_id: Document ID for output file naming
         max_retries: Maximum number of retry attempts (default: 3)
         
     Returns:
@@ -579,62 +522,41 @@ def llamaparse_pdf(file_path: str, doc_id: int, max_retries: int = 3) -> str:
         )
         logger.info("Parser initialized successfully")
         
+        # Set up file extractor for PDF
+        logger.info("Step 2: Setting up file extractor...")
+        file_extractor = {".pdf": parser}
+        logger.info("File extractor configured")
+        
+        # Use SimpleDirectoryReader to parse the file with retries
+        logger.info("Step 3: Starting document parsing...")
+        parse_start_time = datetime.now()
+        
         last_error = None
         for attempt in range(max_retries):
             try:
                 logger.info(f"Parsing attempt {attempt + 1}/{max_retries}")
-                parse_start_time = datetime.now()
-                
-                # Use SimpleDirectoryReader with LlamaParse as file extractor
-                file_extractor = {".pdf": parser}
                 documents = SimpleDirectoryReader(
-                    input_files=[file_path],
+                    input_files=[file_path], 
                     file_extractor=file_extractor
                 ).load_data()
                 
-                logger.info(f"****======*****LLMParse documents: {documents}")
-                
-                if not documents:
-                    last_error = "No documents returned from LlamaParse"
-                    logger.warning(f"Attempt {attempt + 1} failed: {last_error}")
-                    continue
-                
-                # Combine text from all documents
-                content = ""
-                for doc in documents:
-                    if hasattr(doc, "text_resource") and doc.text_resource is not None:
-                        content += doc.text_resource.text + "\n\n"
-                    elif hasattr(doc, "text"):
-                        content += doc.text + "\n\n"
-                
-                # Clean up any extra newlines
-                content = content.strip()
-                
-                # Log the full content size
-                logger.info(f"Combined document content size: {len(content)} bytes")
-                
-                # Basic validation
-                if not content or not content.strip():
-                    last_error = "Empty content received from LlamaParse"
-                    logger.warning(f"Attempt {attempt + 1} failed: {last_error}")
-                    continue
-                
-                parse_duration = (datetime.now() - parse_start_time).total_seconds()
-                total_duration = (datetime.now() - start_time).total_seconds()
-                
-                # Write LlamaParse output to file
-                output_file = write_llamaparse_output(content, doc_id)
-                
-                logger.info("=" * 80)
-                logger.info("LlamaParse processing completed successfully:")
-                logger.info(f"Parsing attempt: {attempt + 1}/{max_retries}")
-                logger.info(f"Document content size: {len(content)} bytes")
-                logger.info(f"Parsing time: {parse_duration:.2f} seconds")
-                logger.info(f"Total processing time: {total_duration:.2f} seconds")
-                logger.info(f"Output written to: {output_file}")
-                logger.info("=" * 80)
-                
-                return content
+                if documents and len(documents) > 0 and documents[0].text.strip():
+                    content = documents[0].text
+                    parse_duration = (datetime.now() - parse_start_time).total_seconds()
+                    total_duration = (datetime.now() - start_time).total_seconds()
+                    
+                    logger.info("=" * 80)
+                    logger.info("LlamaParse processing completed successfully:")
+                    logger.info(f"Parsing attempt: {attempt + 1}/{max_retries}")
+                    logger.info(f"Parsing time: {parse_duration:.2f} seconds")
+                    logger.info(f"Total processing time: {total_duration:.2f} seconds")
+                    logger.info(f"Content length: {len(content)} characters")
+                    logger.info("=" * 80)
+                    
+                    return content
+                else:
+                    last_error = "No content extracted from PDF"
+                    logger.warning(f"Attempt {attempt + 1} failed: Empty content received")
                     
             except Exception as e:
                 last_error = str(e)
@@ -663,6 +585,7 @@ def llamaparse_pdf(file_path: str, doc_id: int, max_retries: int = 3) -> str:
         logger.error("=" * 80)
         raise PDFProcessingError(f"Failed to parse PDF with LlamaParse: {str(e)}")
 
+# Updated process_pdf function
 def process_pdf(doc_id: int, task=None):
     """Process PDF file through all steps"""
     try:
@@ -685,34 +608,29 @@ def process_pdf(doc_id: int, task=None):
             # Update status to processing
             update_processing_status(doc_id, "processing")
             
-            # Extract text from PDF
-            # text = ""
-            # for page in doc:
-            #     text += page.get_text()
-            text = llamaparse_pdf(file_path, doc_id)
+            # Extract text from PDF using LlamaParse
+            text = llamaparse_pdf(file_path)
             
             # Analyze document structure
             structure = analyze_document_structure(doc)
             
-            # Get semantic chunks using Gemini
-            semantic_chunks = get_semantic_chunks(text, doc_id)
+            # Get semantic chunks using the new method
+            semantic_chunks = get_semantic_chunks(text, structure)
             
-            # Validate final chunks
-            is_valid, coverage = validate_content_coverage(text, semantic_chunks)
-            logger.info(f"Final content coverage: {coverage:.2%}")
-            if not is_valid:
-                logger.warning(f"Final content coverage is below threshold: {coverage:.2%}")
-            
-            # Process chunks with overlap and metadata
+            # Process chunks with overlap
             enhanced_chunks = process_chunks_with_overlap(
-                chunks=semantic_chunks,
+                chunks=[chunk["content"] for chunk in semantic_chunks],
                 doc_id=doc_id,
                 structure=structure
             )
             
+            # Attach section metadata to enhanced chunks
+            for i, chunk in enumerate(enhanced_chunks):
+                chunk["metadata"]["section"] = semantic_chunks[i]["metadata"]["section"]
+            
             # Store chunks and metadata
             for chunk in enhanced_chunks:
-                # Store chunk metadata
+                metadata = chunk["metadata"]
                 metadata_query = """
                     INSERT INTO Chunk_Metadata 
                     (doc_id, position, section_path, prev_chunk_id, 
@@ -720,13 +638,12 @@ def process_pdf(doc_id: int, task=None):
                      semantic_unit, structural_context)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
-                metadata = chunk["metadata"]
                 conn.execute_query(
                     metadata_query,
                     (
                         metadata["doc_id"],
                         metadata["position"],
-                        metadata["section_path"],
+                        metadata["section"],
                         metadata["prev_chunk_id"],
                         metadata["next_chunk_id"],
                         metadata["overlap_start_id"],
@@ -748,25 +665,17 @@ def process_pdf(doc_id: int, task=None):
                 # Store chunk and embedding
                 conn.execute_query(
                     """
-                    INSERT INTO Document_Embeddings (doc_id, content, embedding) 
-                    VALUES (%s, %s, JSON_ARRAY_PACK(%s))
+                    INSERT INTO Document_Embeddings (doc_id, content, embedding, chunk_metadata_id) 
+                    VALUES (%s, %s, JSON_ARRAY_PACK(%s), %s)
                     """,
-                    (doc_id, chunk['content'], json.dumps(embedding))
+                    (doc_id, chunk['content'], json.dumps(embedding), chunk_metadata_id)
                 )
             
             # Extract and store knowledge
             kg = KnowledgeGraphGenerator(debug_output=True)
-            for i, chunk in enumerate(enhanced_chunks):
-                chunk_text = chunk['content']
-                logger.debug(f"Processing chunk {i}, content: {repr(chunk_text)}")  # Debug log
-                try:
-                    knowledge = kg.extract_knowledge_sync(chunk_text)
-                    if knowledge:
-                        kg.store_knowledge(knowledge, conn)
-                except Exception as e:
-                    logger.error(f"Error processing chunk {i}: {str(e)}")
-                    logger.debug(f"Problematic chunk content: {repr(chunk_text)}")
-                    continue  # Skip failed chunk and continue with others
+            for chunk in enhanced_chunks:
+                knowledge = kg.extract_knowledge_sync(chunk['content'])
+                kg.store_knowledge(knowledge, conn)
             
             # Update status to completed
             update_processing_status(doc_id, "completed")

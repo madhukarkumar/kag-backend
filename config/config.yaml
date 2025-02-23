@@ -8,9 +8,9 @@ knowledge_creation:
       - "Keep related concepts together, especially for lists and feature descriptions"
       - "Preserve technical terms and their definitions together"
       - "Keep API endpoints with their parameters and descriptions"
-    overlap_size: 150
+    overlap_size: 50
     min_chunk_size: 200
-    max_chunk_size: 1500
+    max_chunk_size: 700
   entity_extraction:
     model: "o3-mini-2025-01-31"
     confidence_threshold: 0.5
