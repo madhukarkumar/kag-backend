@@ -287,8 +287,8 @@ class RAGQueryEngine:
             merged.sort(key=lambda x: x['combined_score'], reverse=True)
             
             # Take top results but ensure we have at least 3 sources
-            min_sources = 3
-            min_score = self.search_config.get('min_score_threshold', 0.15)
+            min_sources = 5  # or higher
+            min_score = self.search_config.get('min_score_threshold', 0.02)  # Lower threshold
             
             # First, try to get sources above threshold
             filtered_results = [r for r in merged if r['combined_score'] >= min_score]

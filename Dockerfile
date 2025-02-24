@@ -1,9 +1,13 @@
-# Use Python 3.12 as base image
-FROM python:3.12-slim
+# Use Python 3.10 as base image
+FROM python:3.10-slim
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    libavcodec-extra \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -19,7 +23,7 @@ RUN mkdir -p /app/documents /app/logs /app/config && \
 COPY --chown=appuser:appuser requirements.txt .
 
 # Install Python dependencies
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
 COPY --chown=appuser:appuser . .

@@ -1,6 +1,6 @@
 """Shared Pydantic models for the SingleStore Knowledge Graph Search application."""
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -183,3 +183,10 @@ class DocumentChunk(BaseModel):
     embedding: Optional[List[float]] = None
     metadata: Optional[Dict] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.now)
+
+class TaskResponse(BaseModel):
+    """Response model for task status"""
+    task_id: str
+    doc_id: int
+    status: str
+    message: Optional[str] = None

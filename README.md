@@ -5,10 +5,12 @@ This is the backend API server for the SingleStore Knowledge Graph application. 
 ## Local Development
 
 ### Prerequisites
-- Python 3.12.9
+- Python 3.10
 - SingleStore database access
-- OpenAI API key
+- OpenAI API key (for text processing and video transcription)
 - Google Gemini API key
+- FFmpeg (for video processing)
+- Additional system libraries: libsm6, libxext6, libavcodec-extra
 
 ### Setup
 
@@ -18,12 +20,21 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-2. Install dependencies:
+2. Install system dependencies (Ubuntu/Debian):
+```bash
+sudo apt-get update && sudo apt-get install -y \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    libavcodec-extra
+```
+
+3. Install Python dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Create a `.env` file in the root directory with:
+4. Create a `.env` file in the root directory with:
 ```env
 OPENAI_API_KEY=your_openai_key
 GEMINI_API_KEY=your_gemini_key
@@ -34,64 +45,32 @@ SINGLESTORE_PASSWORD=your_password
 SINGLESTORE_DATABASE=your_database
 ```
 
-4. Run the server locally:
+5. Run the server locally:
 ```bash
 ./start_backend_services.sh  # On Windows: python main.py
 ```
 
 The server will start at `http://localhost:8000`
 
-## Replit Deployment
+## Features
 
-1. Create a new Python repl on [Replit](https://replit.com)
-2. Upload all the files from this directory
-3. Add environment variables in Replit Secrets
-4. Click "Run" to deploy
+### Document Processing
+- PDF document processing with text extraction and analysis
+- Video processing with audio transcription using OpenAI Whisper
+- Automatic knowledge extraction from both PDFs and video transcripts
+- Real-time processing status updates
+- Background task processing with Celery
 
-The server will be available at your Replit URL (e.g., `https://your-repl-name.username.repl.co`)
-
-## Railway Deployment
-
-1. Fork this repository
-2. Create a new project on [Railway](https://railway.app)
-3. Connect your GitHub repository
-4. Add the following environment variables in Railway:
-   ```env
-   OPENAI_API_KEY=your_openai_key
-   GEMINI_API_KEY=your_gemini_key
-   SINGLESTORE_HOST=your_host
-   SINGLESTORE_PORT=your_port
-   SINGLESTORE_USER=your_user
-   SINGLESTORE_PASSWORD=your_password
-   SINGLESTORE_DATABASE=your_database
-   API_KEY=your_secure_api_key
-   ```
-5. Deploy! Railway will automatically build and deploy your application
-
-The server will be available at your Railway URL (e.g., `https://your-app-name.railway.app`)
-
-## Project Structure
-```
-.
-├── .replit                 # Replit configuration
-├── api/                    # API endpoints
-├── config/                 # Configuration management
-├── core/                   # Core business logic
-├── db/                     # Database operations
-├── processors/             # Document processors
-├── search/                 # Search functionality
-├── tasks/                  # Background tasks
-├── utils/                  # Utility functions
-├── main.py                # FastAPI application
-├── requirements.txt       # Python dependencies
-└── start_backend_services.sh  # Local startup script
-```
+### Supported Formats
+- PDF files
+- Video files (.mp4, .mov, .avi, .mkv)
 
 ## API Endpoints
 
+- `/upload-pdf`: Upload and process PDF documents
+- `/upload-video`: Upload and process video files
 - `/kbdata`: Knowledge base statistics
 - `/config`: System configuration
-- `/upload`: Document upload
 - `/search`: Document search
 - `/graph`: Knowledge graph
 - `/task-status`: Processing status
@@ -105,8 +84,18 @@ Visit `/docs` or `/redoc` for complete API documentation.
 
 See `.env.example` for all required environment variables.
 
+## Docker Deployment
+
+The application includes a Dockerfile configured with all necessary dependencies for both PDF and video processing. The Docker image:
+- Uses Python 3.10
+- Includes FFmpeg and required system libraries
+- Sets up proper permissions and non-root user
+- Configures Celery for background processing
+
 ## Notes
 
 - Free tier Replit has limitations (512MB RAM, 500MB storage)
 - Server sleeps after inactivity on free tier
 - Consider "Always On" feature for production use
+- Video processing requires significant CPU and memory resources
+- Large video files may take longer to process due to transcription

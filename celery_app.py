@@ -25,7 +25,7 @@ app.conf.update(
     enable_utc=True,
     task_track_started=True,
     worker_max_memory_per_child=200000,  # 200MB
-    imports=['tasks.pdf_tasks']  # Import tasks module
+    imports=['tasks.pdf_tasks', 'tasks.video_tasks']  # Import both PDF and video tasks modules
 )
 
 # Example task

@@ -21,13 +21,13 @@ knowledge_creation:
     extraction_prompt_template: "Extract entities and relationships from this text. For each entity:\n- Provide a detailed description\n- Include any alternative names or aliases\n- Specify technical details when present\n- Note relationships with other entities\n- Maintain proper technical context\n\nText to analyze:\n{text}"
 retrieval:
   search:
-    top_k: 10
+    top_k: 20  # Increase this value
     vector_weight: 0.7
     text_weight: 0.5
     exact_phrase_weight: 2.0
     single_term_weight: 1.5
     proximity_distance: 5
-    min_score_threshold: 0.05
+    min_score_threshold: 0.02  # Lower this threshold
     min_similarity_score: 0.4
     context_window_size: 3
   response_generation:
