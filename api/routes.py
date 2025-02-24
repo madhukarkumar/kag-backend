@@ -12,17 +12,23 @@ from core.models import (
     SearchRequest, SearchResponse, SearchResult, Entity, 
     Relationship, KBDataResponse, KBStats, DocumentStats, 
     GraphResponse, GraphData, GraphNode, GraphLink, 
-    ProcessingStatusResponse
+    ProcessingStatusResponse, TaskResponse
 )
 from datetime import datetime, timedelta
 from processors.pdf import (
     save_pdf, create_document_record, get_processing_status, 
     cleanup_processing, PDFProcessingError
 )
+from processors.video_processor import (
+    process_video, VideoProcessingError, SUPPORTED_VIDEO_FORMATS,
+    save_video
+)
 from tasks.pdf_tasks import process_pdf_task
+from tasks.video_tasks import process_video_task
 from celery.result import AsyncResult
 from api.auth import get_api_key
 from utils.status_cache import get_status_from_cache as get_cached_status, update_status_cache
+from pathlib import Path
 
 # Initialize logging
 logger = logging.getLogger(__name__)
@@ -31,6 +37,10 @@ logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv(override=True)
+
+# Define constants
+DOCUMENTS_DIR = os.path.join(os.getcwd(), "documents")
+os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
 app = FastAPI(
     title="KagSearch API",
@@ -80,13 +90,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-class TaskResponse(BaseModel):
-    """Response model for task status"""
-    task_id: str
-    doc_id: int
-    status: str
-    message: Optional[str] = None
 
 @app.get("/processing-status/{doc_id}", response_model=ProcessingStatusResponse)
 async def get_status(doc_id: int):
@@ -566,3 +569,45 @@ async def get_doc_chunks(doc_id: int = Query(..., description="Document ID for w
     except Exception as e:
         logger.error(f"Error retrieving document chunks: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve document chunks: {str(e)}")
+
+@app.post("/upload-video", status_code=status.HTTP_202_ACCEPTED, response_model=TaskResponse, dependencies=[Depends(get_api_key)])
+async def upload_video(file: UploadFile = File(...)):
+    """Upload and process a video file"""
+    try:
+        # Validate file extension
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in SUPPORTED_VIDEO_FORMATS:
+            raise VideoProcessingError(f"Unsupported file format. Supported formats: {', '.join(SUPPORTED_VIDEO_FORMATS)}")
+        
+        # Save the uploaded file
+        logger.info(f"Saving uploaded file: {file.filename}")
+        file_content = await file.read()
+        file_path = save_video(file_content, file.filename)
+        
+        # Create document record
+        doc_id = create_document_record(file.filename, str(file_path), len(file_content))
+        logger.info(f"Created document record with ID: {doc_id}")
+        
+        # Initialize status in cache
+        update_status_cache(doc_id, ProcessingStatusResponse(
+            currentStep="started",
+            fileName=file.filename
+        ))
+        
+        # Start celery task
+        task = process_video_task.delay(doc_id)
+        logger.info(f"Started Celery task {task.id} for doc_id {doc_id}")
+        
+        return TaskResponse(
+            task_id=task.id,
+            doc_id=doc_id,
+            status="pending",
+            message="Processing started"
+        )
+        
+    except VideoProcessingError as e:
+        logger.error(f"Video processing error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error uploading video: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

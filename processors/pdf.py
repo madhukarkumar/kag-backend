@@ -274,7 +274,8 @@ def get_semantic_chunks(text: str, doc_id: Optional[int] = None) -> List[str]:
         # Log input text stats
         logger.info(f"Input text statistics:")
         logger.info(f"Total length: {len(text)} characters")
-        logger.info(f"Number of paragraphs: {text.count('\n\n')}")
+        paragraph_count = text.count("\n\n")
+        logger.info(f"Number of paragraphs: {paragraph_count}")
         
         # Get chunking configuration
         chunking_config = config.knowledge_creation['chunking']
